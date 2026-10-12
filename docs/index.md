@@ -2,7 +2,7 @@ Tmux Monitor shows every tmux session on your hosts in one place, with a live pr
 
 ## Turn it on for a host
 
-The host needs tmux installed. Open the host in Manage and turn on Enable Tmux Monitor in its Tmux Monitor section. Then pick Tmux Monitor from the host's menu.
+The host needs tmux installed. On Windows, install [psmux](https://github.com/psmux/psmux), which provides a `tmux` command; resource use isn't shown for Windows hosts. Open the host in Manage and turn on Enable Tmux Monitor in its Tmux Monitor section. Then pick Tmux Monitor from the host's menu.
 
 Enable tmux mouse support turns on mouse mode for sessions you attach to or create from here. Your other sessions and your tmux config aren't touched.
 
