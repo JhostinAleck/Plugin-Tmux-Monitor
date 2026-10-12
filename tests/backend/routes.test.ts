@@ -14,12 +14,14 @@ function fakeSshClient(outputs: Record<string, string>, exitCode = 0) {
       stderr: EventEmitter;
     };
     stream.stderr = new EventEmitter();
+    // A POSIX host answers the shell probe (see detectShell).
+    const probe = command === "/bin/sh -c 'echo posix'";
     const matchKey = Object.keys(outputs).find((k) => command.includes(k));
-    const output = matchKey ? outputs[matchKey] : "";
+    const output = probe ? "posix\n" : matchKey ? outputs[matchKey] : "";
     cb(null, stream);
     setImmediate(() => {
       if (output) stream.emit("data", Buffer.from(output));
-      stream.emit("close", exitCode);
+      stream.emit("close", probe ? 0 : exitCode);
     });
   };
   return client;
@@ -86,5 +88,80 @@ describe("POST /:hostId/sessions", () => {
       body: { name: "bad:name" },
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("Windows hosts (psmux)", () => {
+  // OpenSSH on Windows runs commands in cmd.exe: no /bin/sh, no ps, no grep.
+  function windowsSshClient(outputs: Record<string, string>) {
+    const client = new EventEmitter() as EventEmitter & {
+      commands: string[];
+      exec: (
+        command: string,
+        cb: (err: Error | null, stream: unknown) => void,
+      ) => void;
+    };
+    client.commands = [];
+    client.exec = (command, cb) => {
+      client.commands.push(command);
+      const stream = new EventEmitter() as EventEmitter & {
+        stderr: EventEmitter;
+      };
+      stream.stderr = new EventEmitter();
+      const posixOnly = /^\/bin\/sh|^ps |grep|nvidia-smi/.test(command);
+      const matchKey = Object.keys(outputs).find((k) => command.includes(k));
+      cb(null, stream);
+      setImmediate(() => {
+        if (!posixOnly && matchKey)
+          stream.emit("data", Buffer.from(outputs[matchKey]));
+        stream.emit("close", posixOnly ? 1 : 0);
+      });
+    };
+    return client;
+  }
+
+  it("lists sessions without wrapping commands in /bin/sh", async () => {
+    const client = windowsSshClient({
+      "-V": "tmux 3.3.8\n",
+      "list-sessions": "agent<<TMX>>1<<TMX>>2<<TMX>>0\n",
+    });
+    server = await startServer({ sshClient: client });
+    const res = await server.request("GET", "/7/overview");
+    expect(res.status).toBe(200);
+    expect(res.body.available).toBe(true);
+    expect(res.body.sessions.map((s: { name: string }) => s.name)).toEqual([
+      "agent",
+    ]);
+    const tmuxCalls = client.commands.filter((c) => c.includes("tmux"));
+    expect(tmuxCalls.every((c) => c.startsWith("tmux -u "))).toBe(true);
+  });
+
+  it("returns empty metrics instead of running ps", async () => {
+    const client = windowsSshClient({ "list-panes": "" });
+    server = await startServer({ sshClient: client });
+    const res = await server.request("GET", "/7/metrics");
+    expect(res.status).toBe(200);
+    expect(client.commands.some((c) => c.startsWith("ps "))).toBe(false);
+  });
+
+  it("searches panes by matching captured text locally", async () => {
+    const client = windowsSshClient({
+      "list-panes":
+        "agent<<TMX>>0<<TMX>>%1<<TMX>>0<<TMX>>100<<TMX>>1<<TMX>>80<<TMX>>24<<TMX>>node<<TMX>>C:\\\\x<<TMX>>t\n",
+      "capture-pane": "build ok\nERROR: boom\nerror again\n",
+    });
+    server = await startServer({ sshClient: client });
+    const res = await server.request("GET", "/7/search?q=error");
+    expect(res.status).toBe(200);
+    expect(
+      res.body.matches.map((m: { line: number; text: string }) => [
+        m.line,
+        m.text,
+      ]),
+    ).toEqual([
+      [2, "ERROR: boom"],
+      [3, "error again"],
+    ]);
+    expect(client.commands.some((c) => c.includes("grep"))).toBe(false);
   });
 });

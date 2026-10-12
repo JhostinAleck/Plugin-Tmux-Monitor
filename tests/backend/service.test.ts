@@ -15,12 +15,14 @@ function fakeSshClient(outputs: Record<string, string>, exitCode = 0) {
       stderr: EventEmitter;
     };
     stream.stderr = new EventEmitter();
+    // A POSIX host answers the shell probe (see detectShell).
+    const probe = command === "/bin/sh -c 'echo posix'";
     const matchKey = Object.keys(outputs).find((k) => command.includes(k));
-    const output = matchKey ? outputs[matchKey] : "";
+    const output = probe ? "posix\n" : matchKey ? outputs[matchKey] : "";
     cb(null, stream);
     setImmediate(() => {
       if (output) stream.emit("data", Buffer.from(output));
-      stream.emit("close", exitCode);
+      stream.emit("close", probe ? 0 : exitCode);
     });
   };
   return client;
@@ -114,7 +116,9 @@ describe("createTmuxSessionsService", () => {
     };
 
     await expect(service.waitForSession(client, "new")).resolves.toBe("new");
-    expect(commands[0]).toContain(`has-session -t '\\''=new'\\''`);
+    expect(commands.find((c) => c.includes("has-session"))).toContain(
+      `has-session -t '\\''=new'\\''`,
+    );
   });
 
   it("waitForSession() falls back to the requested name on timeout", async () => {

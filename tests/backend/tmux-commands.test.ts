@@ -61,6 +61,11 @@ describe("tmux command path handling", () => {
 
         queueMicrotask(() => {
           if (commands.length === 1) {
+            stream.emit("data", Buffer.from("posix\n"));
+            stream.emit("close", 0);
+            return;
+          }
+          if (commands.length === 2) {
             stream.emit("data", Buffer.from("tmux 3.7b\n"));
             stream.emit("close", 0);
             return;
@@ -75,6 +80,7 @@ describe("tmux command path handling", () => {
       sessions: [],
     });
     expect(commands).toEqual([
+      "/bin/sh -c 'echo posix'",
       `/bin/sh -c 'PATH=/opt/homebrew/bin:/usr/local/bin:/opt/bin:/usr/pkg/bin:"$PATH"; export PATH; tmux -u -V'`,
       `/bin/sh -c 'PATH=/opt/homebrew/bin:/usr/local/bin:/opt/bin:/usr/pkg/bin:"$PATH"; export PATH; tmux -u list-sessions -F "#{session_name}<<TMX>>#{session_created}<<TMX>>#{session_activity}<<TMX>>#{session_windows}<<TMX>>#{session_attached}" 2>/dev/null'`,
     ]);

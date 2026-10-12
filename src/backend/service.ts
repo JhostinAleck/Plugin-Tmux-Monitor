@@ -3,6 +3,7 @@ import type { PluginContext } from "@termix-ssh/plugin-sdk/backend";
 import {
   attachOrCreateTmuxSession,
   detectTmux,
+  knownShell,
   waitForTmuxSession,
   type TmuxDetectionResult,
 } from "./tmux-commands.js";
@@ -35,11 +36,14 @@ export function createTmuxSessionsService(ctx: PluginContext): TmuxSessionsV1 {
       const mouseEnabled =
         hostId === undefined ||
         (await ctx.settings.getHost<boolean>(hostId, "mouseEnabled")) !== false;
+      // The stream carries no way to probe the shell; use what was detected
+      // for this host earlier (the monitor lists sessions before attaching).
       attachOrCreateTmuxSession(
         stream as ClientChannel,
         name,
         newName,
         mouseEnabled,
+        knownShell(hostId) ?? "posix",
       );
     },
 

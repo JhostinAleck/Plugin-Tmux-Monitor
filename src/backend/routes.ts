@@ -4,7 +4,7 @@ import type {
   PluginContext,
   PluginHostSummary,
 } from "@termix-ssh/plugin-sdk/backend";
-import { execCommand, tmuxCommand } from "./tmux-commands.js";
+import { execCommand, tmuxShellFor, type TmuxShell } from "./tmux-commands.js";
 import {
   SEP,
   parseSessions,
@@ -14,7 +14,7 @@ import {
   parseGpuOutput,
   buildPaneMetrics,
   attachPanesToWindows,
-  shellEscape,
+  grepLines,
   type RawPane,
   type TmuxSessionSummary,
   type TmuxWindow,
@@ -118,18 +118,18 @@ async function requireHost(
 async function withHostConnection<T>(
   ctx: PluginContext,
   host: PluginHostSummary,
-  fn: (client: Client) => Promise<T>,
+  fn: (client: Client, sh: TmuxShell) => Promise<T>,
 ): Promise<T> {
   return ctx.ssh.withConnection<T, Client>(
     host.id,
     { pool: POOL, purpose: "tmux", overrides: { readyTimeout: 60000 } },
-    fn,
+    async (client) => fn(client, await tmuxShellFor(client, host.id)),
   );
 }
 
-async function tmuxAvailable(conn: Client): Promise<boolean> {
+async function tmuxAvailable(conn: Client, sh: TmuxShell): Promise<boolean> {
   try {
-    await execCommand(conn, tmuxCommand("-V"));
+    await execCommand(conn, sh.cmd("-V"));
     return true;
   } catch {
     return false;
@@ -144,32 +144,35 @@ async function runTmuxList(conn: Client, command: string): Promise<string> {
   }
 }
 
-function listSessionsCmd(): string {
-  return tmuxCommand(
-    `list-sessions -F "#{session_name}${SEP}#{session_created}${SEP}#{session_activity}${SEP}#{session_attached}" 2>/dev/null`,
+function listSessionsCmd(sh: TmuxShell): string {
+  return sh.cmd(
+    `list-sessions -F "#{session_name}${SEP}#{session_created}${SEP}#{session_activity}${SEP}#{session_attached}" ${sh.quiet}`,
   );
 }
 
-function listWindowsCmd(): string {
-  return tmuxCommand(
-    `list-windows -a -F "#{session_name}${SEP}#{window_index}${SEP}#{window_active}${SEP}#{window_name}" 2>/dev/null`,
+function listWindowsCmd(sh: TmuxShell): string {
+  return sh.cmd(
+    `list-windows -a -F "#{session_name}${SEP}#{window_index}${SEP}#{window_active}${SEP}#{window_name}" ${sh.quiet}`,
   );
 }
 
-function listPanesCmd(): string {
-  return tmuxCommand(
-    `list-panes -a -F "#{session_name}${SEP}#{window_index}${SEP}#{pane_id}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{pane_title}" 2>/dev/null`,
+function listPanesCmd(sh: TmuxShell): string {
+  return sh.cmd(
+    `list-panes -a -F "#{session_name}${SEP}#{window_index}${SEP}#{pane_id}${SEP}#{pane_index}${SEP}#{pane_pid}${SEP}#{pane_active}${SEP}#{pane_width}${SEP}#{pane_height}${SEP}#{pane_current_command}${SEP}#{pane_current_path}${SEP}#{pane_title}" ${sh.quiet}`,
   );
 }
 
-async function listPanesRaw(conn: Client): Promise<RawPane[]> {
-  return parsePanes(await runTmuxList(conn, listPanesCmd()));
+async function listPanesRaw(conn: Client, sh: TmuxShell): Promise<RawPane[]> {
+  return parsePanes(await runTmuxList(conn, listPanesCmd(sh)));
 }
 
 async function collectPaneMetrics(
   conn: Client,
   panes: RawPane[],
+  sh: TmuxShell,
 ): Promise<PaneMetrics[]> {
+  // Process metrics read ps, which Windows does not have.
+  if (sh.kind === "windows") return [];
   let psOutput = "";
   try {
     psOutput = await execCommand(
@@ -229,14 +232,14 @@ export function createTmuxMonitorRoutes(
     if (!host || !userId) return;
 
     try {
-      const result = await withHostConnection(ctx, host, async (conn) => {
-        if (!(await tmuxAvailable(conn))) {
+      const result = await withHostConnection(ctx, host, async (conn, sh) => {
+        if (!(await tmuxAvailable(conn, sh))) {
           return { available: false, sessions: [] as TmuxSessionOverview[] };
         }
         const [sessionsOut, windowsOut, panesOut] = await Promise.all([
-          runTmuxList(conn, listSessionsCmd()),
-          runTmuxList(conn, listWindowsCmd()),
-          runTmuxList(conn, listPanesCmd()),
+          runTmuxList(conn, listSessionsCmd(sh)),
+          runTmuxList(conn, listWindowsCmd(sh)),
+          runTmuxList(conn, listPanesCmd(sh)),
         ]);
         const sessions = parseSessions(sessionsOut);
         const windows = parseWindows(windowsOut);
@@ -284,12 +287,13 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
+      await withHostConnection(ctx, host, (conn, sh) =>
         execCommand(
           conn,
-          tmuxCommand(
-            `select-window -t ${shellEscape(paneId)} \\; select-pane -t ${shellEscape(paneId)}`,
-          ),
+          sh.sequence([
+            `select-window -t ${sh.q(paneId)}`,
+            `select-pane -t ${sh.q(paneId)}`,
+          ]),
         ),
       );
       res.json({ ok: true });
@@ -328,11 +332,8 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
-        execCommand(
-          conn,
-          tmuxCommand(`new-session -d -s ${shellEscape(name)}`),
-        ),
+      await withHostConnection(ctx, host, (conn, sh) =>
+        execCommand(conn, sh.cmd(`new-session -d -s ${sh.q(name)}`)),
       );
       ctx.log.info(`tmux session created: ${name} on host ${host.id}`);
       res.json({ ok: true, name });
@@ -377,11 +378,8 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
-        execCommand(
-          conn,
-          tmuxCommand(`new-window -t ${shellEscape(`=${sessionName}`)}`),
-        ),
+      await withHostConnection(ctx, host, (conn, sh) =>
+        execCommand(conn, sh.cmd(`new-window -t ${sh.q(`=${sessionName}`)}`)),
       );
       ctx.log.info(
         `tmux window created in session ${sessionName} on host ${host.id}`,
@@ -432,11 +430,11 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
+      await withHostConnection(ctx, host, (conn, sh) =>
         execCommand(
           conn,
-          tmuxCommand(
-            `rename-session -t ${shellEscape(`=${sessionName}`)} ${shellEscape(newName)}`,
+          sh.cmd(
+            `rename-session -t ${sh.q(`=${sessionName}`)} ${sh.q(newName)}`,
           ),
         ),
       );
@@ -497,11 +495,8 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
-        execCommand(
-          conn,
-          tmuxCommand(`kill-session -t ${shellEscape(`=${sessionName}`)}`),
-        ),
+      await withHostConnection(ctx, host, (conn, sh) =>
+        execCommand(conn, sh.cmd(`kill-session -t ${sh.q(`=${sessionName}`)}`)),
       );
       await tags.deleteSessionForHost(host.id, sessionName);
       ctx.log.info(`tmux session killed on host ${host.id}: ${sessionName}`);
@@ -556,12 +551,10 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
+      await withHostConnection(ctx, host, (conn, sh) =>
         execCommand(
           conn,
-          tmuxCommand(
-            `kill-window -t ${shellEscape(`=${sessionName}:${windowIndex}`)}`,
-          ),
+          sh.cmd(`kill-window -t ${sh.q(`=${sessionName}:${windowIndex}`)}`),
         ),
       );
       ctx.log.info(
@@ -618,8 +611,8 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
-        execCommand(conn, tmuxCommand(`kill-pane -t ${shellEscape(paneId)}`)),
+      await withHostConnection(ctx, host, (conn, sh) =>
+        execCommand(conn, sh.cmd(`kill-pane -t ${sh.q(paneId)}`)),
       );
       ctx.log.info(`tmux pane killed on host ${host.id}: ${paneId}`);
       await ctx.audit.record({
@@ -671,11 +664,11 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      await withHostConnection(ctx, host, (conn) =>
+      await withHostConnection(ctx, host, (conn, sh) =>
         execCommand(
           conn,
-          tmuxCommand(
-            `split-window ${direction} -t ${shellEscape(paneId)} -c ${shellEscape("#{pane_current_path}")}`,
+          sh.cmd(
+            `split-window ${direction} -t ${sh.q(paneId)} -c ${sh.q("#{pane_current_path}")}`,
           ),
         ),
       );
@@ -720,8 +713,8 @@ export function createTmuxMonitorRoutes(
     }
 
     try {
-      const results = await withHostConnection(ctx, host, async (conn) => {
-        const allPanes = await listPanesRaw(conn);
+      const results = await withHostConnection(ctx, host, async (conn, sh) => {
+        const allPanes = await listPanesRaw(conn, sh);
         const panes = allPanes.slice(0, MAX_SEARCH_PANES);
         // Flips to true whenever a limit was hit, so the UI can tell the user
         // the results are partial instead of silently truncating.
@@ -741,12 +734,25 @@ export function createTmuxMonitorRoutes(
           await Promise.all(
             batch.map(async (pane) => {
               try {
-                const output = await execCommand(
-                  conn,
-                  tmuxCommand(
-                    `capture-pane -p -J -t ${shellEscape(pane.id)} -S -${SEARCH_HISTORY_LINES} 2>/dev/null | grep -n -i -F -- ${shellEscape(query)} | head -${MAX_MATCHES_PER_PANE}`,
-                  ),
-                );
+                // Windows has no grep or head: capture there and match here.
+                const output =
+                  sh.kind === "windows"
+                    ? grepLines(
+                        await execCommand(
+                          conn,
+                          sh.cmd(
+                            `capture-pane -p -J -t ${sh.q(pane.id)} -S -${SEARCH_HISTORY_LINES} ${sh.quiet}`,
+                          ),
+                        ),
+                        query,
+                        MAX_MATCHES_PER_PANE,
+                      )
+                    : await execCommand(
+                        conn,
+                        sh.cmd(
+                          `capture-pane -p -J -t ${sh.q(pane.id)} -S -${SEARCH_HISTORY_LINES} 2>/dev/null | grep -n -i -F -- ${sh.q(query)} | head -${MAX_MATCHES_PER_PANE}`,
+                        ),
+                      );
                 const lines = output.split("\n").filter(Boolean);
                 if (lines.length >= MAX_MATCHES_PER_PANE) truncated = true;
                 for (const line of lines) {
@@ -802,10 +808,10 @@ export function createTmuxMonitorRoutes(
     if (!host) return;
 
     try {
-      const metrics = await withHostConnection(ctx, host, async (conn) => {
-        const panes = await listPanesRaw(conn);
+      const metrics = await withHostConnection(ctx, host, async (conn, sh) => {
+        const panes = await listPanesRaw(conn, sh);
         if (panes.length === 0) return [];
-        return collectPaneMetrics(conn, panes);
+        return collectPaneMetrics(conn, panes, sh);
       });
       res.json({ panes: metrics });
     } catch (err) {

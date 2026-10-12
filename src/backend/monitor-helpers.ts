@@ -248,3 +248,18 @@ export function attachPanesToWindows(
 export function shellEscape(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
+
+/**
+ * `grep -n -i -F -- query | head -max` for hosts without grep (Windows):
+ * case-insensitive literal match, "<line>:<text>" with 1-based line numbers.
+ */
+export function grepLines(text: string, query: string, max: number): string {
+  const needle = query.toLowerCase();
+  const out: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length && out.length < max; i++) {
+    if (lines[i].toLowerCase().includes(needle))
+      out.push(`${i + 1}:${lines[i]}`);
+  }
+  return out.join("\n");
+}
