@@ -1,4 +1,4 @@
-import { useEffect, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import type { PanePreview } from "../../src/frontend/PanePreview";
 import type { SessionTree } from "../../src/frontend/SessionTree";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +28,6 @@ const state = vi.hoisted(() => ({
   t: (key: string) => key,
   invokeAction: vi.fn().mockResolvedValue(undefined),
   layout: {} as object | null,
-  previewMount: vi.fn(),
 }));
 vi.mock("@termix-ssh/plugin-sdk/frontend", async (original) => ({
   ...(await original<object>()),
@@ -76,9 +75,6 @@ vi.mock("../../src/frontend/PanePreview", () => ({
     pane,
     metrics,
   }: ComponentProps<typeof PanePreview>) => {
-    useEffect(() => {
-      state.previewMount();
-    }, []);
     return (
       <div data-testid="preview">
         {host.id}:{pane.paneId}:{metrics?.cpuPercent ?? "none"}
@@ -380,6 +376,14 @@ describe("multi-host tmux monitor", () => {
         screen.getByRole("button", { name: "tmuxMonitor.attach" }),
         { button: 0, ctrlKey: false },
       );
+      expect(
+        screen.queryByRole("menuitem", { name: "tmuxMonitor.attachInMonitor" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("menuitem", {
+          name: "tmuxMonitor.attachBrowserTab",
+        }),
+      ).not.toBeInTheDocument();
       fireEvent.click(
         await screen.findByRole("menuitem", {
           name: "tmuxMonitor.attachNewTab",
@@ -493,7 +497,6 @@ describe("multi-host tmux monitor", () => {
     await screen.findByText("cpu:10");
     fireEvent.click(screen.getAllByRole("button", { name: "pane" })[0]!);
     state.invokeAction.mockClear();
-    await waitFor(() => expect(state.previewMount).toHaveBeenCalledOnce());
     fireEvent.pointerDown(
       screen.getByRole("button", { name: "tmuxMonitor.attach" }),
       { button: 0, ctrlKey: false },
@@ -504,14 +507,34 @@ describe("multi-host tmux monitor", () => {
       }),
     );
     expect(state.invokeAction).not.toHaveBeenCalled();
-    await waitFor(() => expect(state.previewMount).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(api.focusTmuxPane).toHaveBeenCalledWith(1, "%0"),
     );
   });
-  it("offers only inline attach in standalone desktop without a tab layout", async () => {
+  it("disables attach in standalone desktop without a Termix tab layout", async () => {
     state.layout = null;
     (window as { IS_ELECTRON?: boolean }).IS_ELECTRON = true;
+    try {
+      render(
+        <SurfaceScope>
+          <TmuxMonitor initialHostId={1} />
+        </SurfaceScope>,
+      );
+      await screen.findByText("cpu:10");
+      fireEvent.click(screen.getAllByRole("button", { name: "pane" })[0]!);
+      expect(
+        screen.getByRole("button", { name: "tmuxMonitor.attach" }),
+      ).toBeDisabled();
+      expect(
+        screen.queryByRole("menuitem", { name: "tmuxMonitor.attachInMonitor" }),
+      ).not.toBeInTheDocument();
+      expect(state.invokeAction).not.toHaveBeenCalled();
+    } finally {
+      delete (window as { IS_ELECTRON?: boolean }).IS_ELECTRON;
+    }
+  });
+  it("keeps browser-tab attach available on web alongside internal and inline destinations", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
     try {
       render(
         <SurfaceScope>
@@ -526,19 +549,27 @@ describe("multi-host tmux monitor", () => {
       );
       expect(
         await screen.findByRole("menuitem", {
-          name: "tmuxMonitor.attachInMonitor",
+          name: "tmuxMonitor.attachNewTab",
         }),
       ).toBeEnabled();
       expect(
-        screen.queryByRole("menuitem", { name: "tmuxMonitor.attachNewTab" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("menuitem", {
-          name: "tmuxMonitor.attachBrowserTab",
-        }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("menuitem", { name: "tmuxMonitor.attachInMonitor" }),
+      ).toBeEnabled();
+      fireEvent.click(
+        screen.getByRole("menuitem", { name: "tmuxMonitor.attachBrowserTab" }),
+      );
+      expect(open).toHaveBeenCalledOnce();
+      const url = new URL(
+        String(open.mock.calls[0]![0]),
+        "https://example.test",
+      );
+      expect(url.searchParams.get("view")).toBe("terminal");
+      expect(url.searchParams.get("hostId")).toBe("1");
+      expect(url.searchParams.get("tmuxSession")).toBe("same");
+      expect(open.mock.calls[0]![1]).toBe("_blank");
+      expect(state.invokeAction).not.toHaveBeenCalled();
     } finally {
-      delete (window as { IS_ELECTRON?: boolean }).IS_ELECTRON;
+      open.mockRestore();
     }
   });
 });

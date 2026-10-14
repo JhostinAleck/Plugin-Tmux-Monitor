@@ -13,7 +13,7 @@ Enable tmux mouse support turns on mouse mode for sessions you attach to or crea
 - Search the output of every pane at once, to find the one doing something.
 - Tag sessions to remember what they are for.
 - Create, rename and kill sessions and windows. Split panes right or down.
-- Attach lets you choose between a terminal inside the monitor and a new tab in Termix, on web and desktop. A standalone web monitor offers a browser tab when there is no Termix tab bar; standalone desktop keeps the inline option.
+- On desktop, Attach opens a new terminal tab in Termix. On web, choose between staying inside the monitor, a new Termix tab, and a new browser tab. A standalone web monitor offers inline and browser-tab destinations when there is no Termix tab bar; Attach is unavailable in standalone desktop without a Termix tab layout.
 
 It refreshes every few seconds while it is open.
 

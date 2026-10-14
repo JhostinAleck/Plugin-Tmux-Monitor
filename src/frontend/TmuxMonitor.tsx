@@ -192,7 +192,6 @@ export function TmuxMonitor({
   // client can render stale borders; a refit forces a PTY resize which makes
   // tmux fully redraw the client.
   const previewTermRef = useRef<TabHandle | null>(null);
-  const [inlineAttachGeneration, setInlineAttachGeneration] = useState(0);
   const nudgePreviewRedraw = useCallback(() => {
     setTimeout(() => {
       previewTermRef.current?.fit?.();
@@ -929,7 +928,7 @@ export function TmuxMonitor({
   // Attach inside the monitor: expand the session and select its active pane
   // so the embedded terminal (a real tmux attach) shows it.
   const attachInline = useCallback(
-    (sessionName: string, reconnect = false) => {
+    (sessionName: string) => {
       const session = overview?.sessions.find((s) => s.name === sessionName);
       if (!session) return;
       const activeWindow =
@@ -943,7 +942,6 @@ export function TmuxMonitor({
         expandedRestoredRef.current = true;
         if (selectedHostId !== null) persistExpanded(selectedHostId, next);
       }
-      if (reconnect) setInlineAttachGeneration((generation) => generation + 1);
       selectPane({
         paneId: activePane.id,
         sessionName,
@@ -968,17 +966,21 @@ export function TmuxMonitor({
       }).catch(() => toast.error(t("tmuxMonitor.attachFailed")));
       return;
     }
-    // A standalone monitor has no shell tab bar. Preserve its existing fallback;
-    // Electron cannot open internal file:// popups.
+    // Desktop can only open a terminal in the current Termix tab layout.
     if (isElectron()) {
-      if (session) attachInline(session);
+      toast.error(t("tmuxMonitor.attachFailed"));
       return;
     }
+    openBrowserTerminal(session);
+  }
+
+  function openBrowserTerminal(sessionName?: string) {
+    if (selectedHostId === null || isElectron()) return;
     const params = new URLSearchParams({
       view: "terminal",
       hostId: String(selectedHostId),
     });
-    if (session) params.set("tmuxSession", session);
+    if (sessionName) params.set("tmuxSession", sessionName);
     window.open(`${window.location.pathname}?${params.toString()}`, "_blank");
   }
 
@@ -1520,7 +1522,10 @@ export function TmuxMonitor({
                 <Button
                   variant="outline"
                   className="border-accent-brand/40 text-accent-brand hover:bg-accent-brand/10 hover:text-accent-brand dark:border-accent-brand/40"
-                  disabled={selectedHostId === null}
+                  disabled={
+                    selectedHostId === null ||
+                    (isElectron() && !tabs.getLayout())
+                  }
                   title={
                     selectedHost
                       ? selectedPane
@@ -1538,24 +1543,32 @@ export function TmuxMonitor({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  disabled={!selectedPane?.sessionName}
-                  onSelect={() => {
-                    if (selectedPane?.sessionName)
-                      attachInline(selectedPane.sessionName, true);
-                  }}
-                >
-                  <MonitorPlay className="size-3.5" />
-                  {t("tmuxMonitor.attachInMonitor")}
-                </DropdownMenuItem>
-                {(tabs.getLayout() || !isElectron()) && (
+                {!isElectron() && (
+                  <DropdownMenuItem
+                    disabled={!selectedPane?.sessionName}
+                    onSelect={() => {
+                      if (selectedPane?.sessionName)
+                        attachInline(selectedPane.sessionName);
+                    }}
+                  >
+                    <MonitorPlay className="size-3.5" />
+                    {t("tmuxMonitor.attachInMonitor")}
+                  </DropdownMenuItem>
+                )}
+                {tabs.getLayout() && (
                   <DropdownMenuItem onSelect={() => openTerminal()}>
                     <SquareTerminal className="size-3.5" />
-                    {t(
-                      tabs.getLayout()
-                        ? "tmuxMonitor.attachNewTab"
-                        : "tmuxMonitor.attachBrowserTab",
-                    )}
+                    {t("tmuxMonitor.attachNewTab")}
+                  </DropdownMenuItem>
+                )}
+                {!isElectron() && (
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      openBrowserTerminal(selectedPane?.sessionName)
+                    }
+                  >
+                    <SquareTerminal className="size-3.5" />
+                    {t("tmuxMonitor.attachBrowserTab")}
                   </DropdownMenuItem>
                 )}
               </DropdownMenuContent>
@@ -1579,7 +1592,7 @@ export function TmuxMonitor({
         <div className="flex min-h-0 flex-1 flex-col">
           {selectedPane && selectedHost && overviewHostId === selectedHostId ? (
             <PanePreview
-              key={`${selectedHost.id}:${selectedPane.sessionName}:${inlineAttachGeneration}`}
+              key={`${selectedHost.id}:${selectedPane.sessionName}`}
               host={selectedHost}
               pane={selectedPane}
               metrics={selectedPaneMetrics}
