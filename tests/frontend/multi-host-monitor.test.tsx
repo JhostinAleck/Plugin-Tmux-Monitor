@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useEffect, type ComponentProps } from "react";
 import type { PanePreview } from "../../src/frontend/PanePreview";
 import type { SessionTree } from "../../src/frontend/SessionTree";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   t: (key: string) => key,
   invokeAction: vi.fn().mockResolvedValue(undefined),
   layout: {} as object | null,
+  previewMount: vi.fn(),
 }));
 vi.mock("@termix-ssh/plugin-sdk/frontend", async (original) => ({
   ...(await original<object>()),
@@ -74,11 +75,16 @@ vi.mock("../../src/frontend/PanePreview", () => ({
     host,
     pane,
     metrics,
-  }: ComponentProps<typeof PanePreview>) => (
-    <div data-testid="preview">
-      {host.id}:{pane.paneId}:{metrics?.cpuPercent ?? "none"}
-    </div>
-  ),
+  }: ComponentProps<typeof PanePreview>) => {
+    useEffect(() => {
+      state.previewMount();
+    }, []);
+    return (
+      <div data-testid="preview">
+        {host.id}:{pane.paneId}:{metrics?.cpuPercent ?? "none"}
+      </div>
+    );
+  },
 }));
 vi.mock("../../src/frontend/SessionTree", () => ({
   SessionTree: (props: ComponentProps<typeof SessionTree>) => (
@@ -487,6 +493,7 @@ describe("multi-host tmux monitor", () => {
     await screen.findByText("cpu:10");
     fireEvent.click(screen.getAllByRole("button", { name: "pane" })[0]!);
     state.invokeAction.mockClear();
+    await waitFor(() => expect(state.previewMount).toHaveBeenCalledOnce());
     fireEvent.pointerDown(
       screen.getByRole("button", { name: "tmuxMonitor.attach" }),
       { button: 0, ctrlKey: false },
@@ -497,6 +504,7 @@ describe("multi-host tmux monitor", () => {
       }),
     );
     expect(state.invokeAction).not.toHaveBeenCalled();
+    await waitFor(() => expect(state.previewMount).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(api.focusTmuxPane).toHaveBeenCalledWith(1, "%0"),
     );

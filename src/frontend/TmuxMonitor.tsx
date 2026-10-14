@@ -192,6 +192,7 @@ export function TmuxMonitor({
   // client can render stale borders; a refit forces a PTY resize which makes
   // tmux fully redraw the client.
   const previewTermRef = useRef<TabHandle | null>(null);
+  const [inlineAttachGeneration, setInlineAttachGeneration] = useState(0);
   const nudgePreviewRedraw = useCallback(() => {
     setTimeout(() => {
       previewTermRef.current?.fit?.();
@@ -928,7 +929,7 @@ export function TmuxMonitor({
   // Attach inside the monitor: expand the session and select its active pane
   // so the embedded terminal (a real tmux attach) shows it.
   const attachInline = useCallback(
-    (sessionName: string) => {
+    (sessionName: string, reconnect = false) => {
       const session = overview?.sessions.find((s) => s.name === sessionName);
       if (!session) return;
       const activeWindow =
@@ -942,6 +943,7 @@ export function TmuxMonitor({
         expandedRestoredRef.current = true;
         if (selectedHostId !== null) persistExpanded(selectedHostId, next);
       }
+      if (reconnect) setInlineAttachGeneration((generation) => generation + 1);
       selectPane({
         paneId: activePane.id,
         sessionName,
@@ -1540,7 +1542,7 @@ export function TmuxMonitor({
                   disabled={!selectedPane?.sessionName}
                   onSelect={() => {
                     if (selectedPane?.sessionName)
-                      attachInline(selectedPane.sessionName);
+                      attachInline(selectedPane.sessionName, true);
                   }}
                 >
                   <MonitorPlay className="size-3.5" />
@@ -1577,7 +1579,7 @@ export function TmuxMonitor({
         <div className="flex min-h-0 flex-1 flex-col">
           {selectedPane && selectedHost && overviewHostId === selectedHostId ? (
             <PanePreview
-              key={`${selectedHost.id}:${selectedPane.sessionName}`}
+              key={`${selectedHost.id}:${selectedPane.sessionName}:${inlineAttachGeneration}`}
               host={selectedHost}
               pane={selectedPane}
               metrics={selectedPaneMetrics}
