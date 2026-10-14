@@ -1543,18 +1543,6 @@ export function TmuxMonitor({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {!isElectron() && (
-                  <DropdownMenuItem
-                    disabled={!selectedPane?.sessionName}
-                    onSelect={() => {
-                      if (selectedPane?.sessionName)
-                        attachInline(selectedPane.sessionName);
-                    }}
-                  >
-                    <MonitorPlay className="size-3.5" />
-                    {t("tmuxMonitor.attachInMonitor")}
-                  </DropdownMenuItem>
-                )}
                 {tabs.getLayout() && (
                   <DropdownMenuItem onSelect={() => openTerminal()}>
                     <SquareTerminal className="size-3.5" />

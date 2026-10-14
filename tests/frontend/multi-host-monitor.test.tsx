@@ -488,29 +488,6 @@ describe("multi-host tmux monitor", () => {
     expect(open).not.toHaveBeenCalled();
     open.mockRestore();
   });
-  it("lets the user keep a selected tmux session inside the monitor", async () => {
-    render(
-      <SurfaceScope>
-        <TmuxMonitor initialHostId={1} />
-      </SurfaceScope>,
-    );
-    await screen.findByText("cpu:10");
-    fireEvent.click(screen.getAllByRole("button", { name: "pane" })[0]!);
-    state.invokeAction.mockClear();
-    fireEvent.pointerDown(
-      screen.getByRole("button", { name: "tmuxMonitor.attach" }),
-      { button: 0, ctrlKey: false },
-    );
-    fireEvent.click(
-      await screen.findByRole("menuitem", {
-        name: "tmuxMonitor.attachInMonitor",
-      }),
-    );
-    expect(state.invokeAction).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(api.focusTmuxPane).toHaveBeenCalledWith(1, "%0"),
-    );
-  });
   it("disables attach in standalone desktop without a Termix tab layout", async () => {
     state.layout = null;
     (window as { IS_ELECTRON?: boolean }).IS_ELECTRON = true;
@@ -533,7 +510,7 @@ describe("multi-host tmux monitor", () => {
       delete (window as { IS_ELECTRON?: boolean }).IS_ELECTRON;
     }
   });
-  it("keeps browser-tab attach available on web alongside internal and inline destinations", async () => {
+  it("offers only internal and browser tab destinations on web", async () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     try {
       render(
@@ -553,8 +530,9 @@ describe("multi-host tmux monitor", () => {
         }),
       ).toBeEnabled();
       expect(
-        screen.getByRole("menuitem", { name: "tmuxMonitor.attachInMonitor" }),
-      ).toBeEnabled();
+        screen.queryByRole("menuitem", { name: "tmuxMonitor.attachInMonitor" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getAllByRole("menuitem")).toHaveLength(2);
       fireEvent.click(
         screen.getByRole("menuitem", { name: "tmuxMonitor.attachBrowserTab" }),
       );

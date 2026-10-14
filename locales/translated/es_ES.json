@@ -111,7 +111,6 @@
     "toggleSession": "Expandir o contraer {{session}}",
     "tagsPlaceholder": "laboratorio, formación",
     "attachFailed": "No se pudo abrir la terminal. Comprueba que SSH Terminal esté activado.",
-    "attachInMonitor": "Dentro del monitor",
     "attachNewTab": "Nueva pestaña de Termix",
     "attachBrowserTab": "Nueva pestaña del navegador"
   }
