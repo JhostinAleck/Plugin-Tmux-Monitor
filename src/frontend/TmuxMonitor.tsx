@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useHosts,
+  invokeAction,
+  useTabs,
   useToast,
   useTranslation,
 } from "@termix-ssh/plugin-sdk/frontend";
@@ -10,6 +12,10 @@ import type {
 } from "@termix-ssh/plugin-sdk/frontend";
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
   Input,
   Popover,
   PopoverContent,
@@ -110,6 +116,7 @@ export function TmuxMonitor({
   const { t } = useTranslation();
   const toast = useToast();
   const { hosts: allHosts, loaded: hostsLoaded } = useHosts();
+  const tabs = useTabs();
   const hosts = useMemo(
     () =>
       allHosts.filter(
@@ -947,9 +954,20 @@ export function TmuxMonitor({
   function openTerminal(sessionName?: string) {
     if (selectedHostId === null) return;
     const session = sessionName ?? selectedPane?.sessionName;
-    // window.open is denied by Electron's window-open handler (internal
-    // file:// URLs never reach the browser), so the desktop app attaches in
-    // the monitor's own terminal instead.
+    // Prefer a fresh tab in the current Termix shell on both web and desktop.
+    if (tabs.getLayout()) {
+      const host = hosts.find(
+        (entry) => String(entry.id) === String(selectedHostId),
+      );
+      if (!host) return;
+      void invokeAction("terminal.open", host, {
+        tmuxSession: session,
+        label: session,
+      }).catch(() => toast.error(t("tmuxMonitor.attachFailed")));
+      return;
+    }
+    // A standalone monitor has no shell tab bar. Preserve its existing fallback;
+    // Electron cannot open internal file:// popups.
     if (isElectron()) {
       if (session) attachInline(session);
       return;
@@ -1495,25 +1513,51 @@ export function TmuxMonitor({
                 className={`size-3.5 ${overviewLoading || refreshing ? "animate-spin" : ""}`}
               />
             </Button>
-            <Button
-              variant="outline"
-              className="border-accent-brand/40 text-accent-brand hover:bg-accent-brand/10 hover:text-accent-brand dark:border-accent-brand/40"
-              disabled={selectedHostId === null}
-              title={
-                selectedHost
-                  ? selectedPane
-                    ? t("tmuxMonitor.attachTooltipPane", {
-                        host: hostLabel,
-                        session: selectedPane.sessionName,
-                      })
-                    : t("tmuxMonitor.attachTooltip", { host: hostLabel })
-                  : undefined
-              }
-              onClick={() => openTerminal()}
-            >
-              <SquareTerminal className="size-3.5" />
-              {t("tmuxMonitor.attach")}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="border-accent-brand/40 text-accent-brand hover:bg-accent-brand/10 hover:text-accent-brand dark:border-accent-brand/40"
+                  disabled={selectedHostId === null}
+                  title={
+                    selectedHost
+                      ? selectedPane
+                        ? t("tmuxMonitor.attachTooltipPane", {
+                            host: hostLabel,
+                            session: selectedPane.sessionName,
+                          })
+                        : t("tmuxMonitor.attachTooltip", { host: hostLabel })
+                      : undefined
+                  }
+                >
+                  <SquareTerminal className="size-3.5" />
+                  {t("tmuxMonitor.attach")}
+                  <ChevronDown className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={!selectedPane?.sessionName}
+                  onSelect={() => {
+                    if (selectedPane?.sessionName)
+                      attachInline(selectedPane.sessionName);
+                  }}
+                >
+                  <MonitorPlay className="size-3.5" />
+                  {t("tmuxMonitor.attachInMonitor")}
+                </DropdownMenuItem>
+                {(tabs.getLayout() || !isElectron()) && (
+                  <DropdownMenuItem onSelect={() => openTerminal()}>
+                    <SquareTerminal className="size-3.5" />
+                    {t(
+                      tabs.getLayout()
+                        ? "tmuxMonitor.attachNewTab"
+                        : "tmuxMonitor.attachBrowserTab",
+                    )}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
