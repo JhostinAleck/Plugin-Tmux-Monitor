@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- Show native psmux sessions on Windows when Git also provides /bin/sh.
+
 ## 1.0.4
 
 ### Fixed
