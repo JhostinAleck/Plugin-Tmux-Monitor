@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   attachOrCreateTmuxSession,
   buildTmuxCommand,
+  sessionOptionCommands,
   detectTmux,
   tmuxCommand,
   withTmuxPath,
@@ -116,14 +117,14 @@ describe("session-scoped tmux mouse", () => {
           "set-option",
           "-q",
           "-t",
-          `=${name}`,
+          `=${name}:`,
           "mouse",
           "off",
           ";",
           "set-option",
           "-q",
           "-t",
-          `=${name}`,
+          `=${name}:`,
           "history-limit",
           "50000",
           ";",
@@ -237,7 +238,49 @@ describe("tmux on a host without /bin/sh", () => {
       "windows",
     );
     expect(command).toBe(
-      'tmux -u set-option -q -t =main mouse on ";" set-option -q -t =main history-limit 50000 ";" attach-session -t =main\r',
+      'tmux -u set-option -q -t =main: mouse on ";" set-option -q -t =main: history-limit 50000 ";" attach-session -t =main\r',
     );
   });
+});
+
+const hasTmux = (() => {
+  try {
+    execFileSync("tmux", ["-V"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe("session options on a real tmux server", () => {
+  it.skipIf(!hasTmux || process.platform === "win32")(
+    "applies mouse and history-limit to the named session only",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "termix-tmux-"));
+      const env = { ...process.env, TMUX_TMPDIR: dir, TMUX: "" };
+      const tmux = (...args: string[]) =>
+        execFileSync("tmux", ["-f", "/dev/null", ...args], {
+          encoding: "utf8",
+          env,
+        }).trim();
+      try {
+        tmux("new-session", "-d", "-s", "work");
+        tmux("new-session", "-d", "-s", "work2");
+        for (const args of sessionOptionCommands("work", true)) tmux(...args);
+        expect(tmux("show-options", "-t", "=work:", "-v", "mouse")).toBe("on");
+        expect(
+          tmux("show-options", "-t", "=work:", "-v", "history-limit"),
+        ).toBe("50000");
+        expect(tmux("show-options", "-t", "=work2:", "mouse")).toBe("");
+        expect(tmux("show-options", "-g", "-v", "mouse")).toBe("off");
+      } finally {
+        try {
+          tmux("kill-server");
+        } catch {
+          // server already gone
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
